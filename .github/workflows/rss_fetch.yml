@@ -1,0 +1,40 @@
+name: RSS and Hot Stories Fetch
+
+on:
+  schedule:
+    # Runs at 00:00 UTC every day
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Override date (YYYY-MM-DD format)'
+        required: false
+        type: string
+
+jobs:
+  fetch-content:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        # Fetch all history so we can commit
+        fetch-depth: 0
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install feedparser requests beautifulsoup4
+        
+    - name: Fetch RSS feed and hot stories
+      run: |
+        if [ "${{ github.event.inputs.date }}" != "" ]; then
+          python rss_fetcher.py --date "${{ github.event.inputs.date }}"
+        else
+          python rss_fetcher.py
+        fi
