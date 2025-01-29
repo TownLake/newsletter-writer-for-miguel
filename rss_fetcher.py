@@ -5,68 +5,89 @@ import os
 import argparse
 import requests
 from bs4 import BeautifulSoup
+import time
+
+def fetch_rss_with_requests():
+    """
+    Fetch RSS feed using direct HTTP request
+    """
+    url = 'https://cointelegraph.com/editors_pick_rss'
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "application/rss+xml,application/xml;q=0.9",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        # Use feedparser to parse the raw XML content
+        feed = feedparser.parse(response.content)
+        
+        articles = []
+        if hasattr(feed, 'entries'):
+            for entry in feed.entries:
+                article = {
+                    'title': entry.title,
+                    'link': entry.link,
+                    'published': entry.published if hasattr(entry, 'published') else None,
+                    'summary': entry.summary if hasattr(entry, 'summary') else None,
+                    'tags': [tag.term for tag in entry.tags] if hasattr(entry, 'tags') else [],
+                    'source': 'editors_pick_rss'
+                }
+                articles.append(article)
+        
+        print(f"Found {len(articles)} articles in RSS feed")
+        return articles
+    except Exception as e:
+        print(f"Error fetching RSS: {str(e)}")
+        print(f"Response content (first 500 chars): {response.text[:500]}")
+        return []
 
 def fetch_hot_stories():
     """
     Fetch hot stories from Cointelegraph homepage using web scraping
-    Returns:
-        list: List of dictionaries containing hot stories
     """
     url = "https://cointelegraph.com/"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
     }
     
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()  # Raise an exception for bad status codes
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
         
         soup = BeautifulSoup(response.text, "html.parser")
-        hot_stories_section = soup.find("section", {"class": "hot-stories"})
-        
-        if not hot_stories_section:
-            print("Warning: Could not find the 'Hot Stories' section")
-            return []
-        
         hot_stories = []
-        story_links = hot_stories_section.find_all("a", {"class": "post-card-inline__title-link"})
         
-        for story in story_links:
-            hot_stories.append({
-                'title': story.text.strip(),
-                'link': "https://cointelegraph.com" + story["href"],
-                'source': 'hot_stories'
-            })
+        # Look for articles in news links
+        news_links = soup.select("a[href*='/news/']")
+        for link in news_links[:10]:
+            title = link.get_text(strip=True)
+            href = link['href']
+            if title and href and href not in [s['link'] for s in hot_stories]:
+                if not href.startswith('http'):
+                    href = "https://cointelegraph.com" + href
+                hot_stories.append({
+                    'title': title,
+                    'link': href,
+                    'source': 'news_links'
+                })
         
         return hot_stories
-    
-    except requests.RequestException as e:
-        print(f"Error fetching hot stories: {e}")
+    except Exception as e:
+        print(f"Error fetching hot stories: {str(e)}")
         return []
 
-def fetch_rss(date_override=None):
+def main(date_override=None):
     """
-    Fetch RSS feed and hot stories, save to JSON file
-    Args:
-        date_override (str, optional): Date in YYYY-MM-DD format to override the current date
+    Main function to fetch both RSS and hot stories
     """
-    # Fetch the RSS feed
-    feed = feedparser.parse('https://cointelegraph.com/editors_pick_rss')
-    
-    # Create a list to store the articles
-    articles = []
-    
-    # Process each entry in the feed
-    for entry in feed.entries:
-        article = {
-            'title': entry.title,
-            'link': entry.link,
-            'published': entry.published,
-            'summary': entry.summary,
-            'tags': [tag.term for tag in entry.tags] if hasattr(entry, 'tags') else [],
-            'source': 'editors_pick_rss'
-        }
-        articles.append(article)
+    # Fetch RSS feed articles
+    articles = fetch_rss_with_requests()
     
     # Fetch hot stories
     hot_stories = fetch_hot_stories()
@@ -77,7 +98,6 @@ def fetch_rss(date_override=None):
     # Use provided date or current date
     if date_override:
         try:
-            # Validate date format
             datetime.strptime(date_override, '%Y-%m-%d')
             current_date = date_override
         except ValueError:
@@ -89,13 +109,19 @@ def fetch_rss(date_override=None):
     filename = f'data/cointelegraph_combined_{current_date}.json'
     
     # Save the articles and hot stories to a JSON file
+    output_data = {
+        'fetch_date': current_date,
+        'fetch_timestamp': datetime.now().isoformat(),
+        'editors_pick_articles': articles,
+        'hot_stories': hot_stories,
+        'metadata': {
+            'num_editor_picks': len(articles),
+            'num_hot_stories': len(hot_stories)
+        }
+    }
+    
     with open(filename, 'w', encoding='utf-8') as f:
-        json.dump({
-            'fetch_date': current_date,
-            'fetch_timestamp': datetime.now().isoformat(),
-            'editors_pick_articles': articles,
-            'hot_stories': hot_stories
-        }, f, ensure_ascii=False, indent=2)
+        json.dump(output_data, f, ensure_ascii=False, indent=2)
     
     print(f'Successfully saved {len(articles)} editor picks and {len(hot_stories)} hot stories to {filename}')
 
@@ -104,4 +130,4 @@ if __name__ == '__main__':
     parser.add_argument('--date', type=str, help='Override date (YYYY-MM-DD format)')
     args = parser.parse_args()
     
-    fetch_rss(args.date)
+    main(args.date)
